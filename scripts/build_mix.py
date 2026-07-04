@@ -21,7 +21,6 @@ BLEND = [
     ("mlfoundations/dclm-baseline-1.0-parquet", None,    "text", 0.15),  # general-web diversity
     ("wikimedia/wikipedia",         "20231101.en",       "text", 0.10),  # factual grounding
     ("HuggingFaceTB/finemath",      "finemath-4plus",    "text", 0.07),  # reasoning signal
-    ("deepmind/pg19",               None,                "text", 0.03),  # long-form prose
 ]
 
 
