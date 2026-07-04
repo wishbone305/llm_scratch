@@ -1,0 +1,22 @@
+# virtualenv
+.venv/
+
+# python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# data + training artifacts (regenerated; far too big for git)
+data/
+out/
+runs/
+*.pt
+*.safetensors
+*.npz
+
+# misc
+.DS_Store
+.ipynb_checkpoints/
