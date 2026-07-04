@@ -18,5 +18,7 @@ def pick_device(prefer: str | None = None) -> torch.device:
 def device_policy(device: torch.device) -> dict:
     """CUDA -> bf16 autocast + torch.compile; MPS/CPU -> fp32, no compile (compile is flaky on MPS)."""
     if device.type == "cuda":
-        return {"amp_dtype": torch.bfloat16, "use_amp": True, "use_compile": True}
+        # Ampere+ (A100/L4) do bf16 in tensor cores; Turing (T4) does NOT -> use fp16 there.
+        amp_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        return {"amp_dtype": amp_dtype, "use_amp": True, "use_compile": True}
     return {"amp_dtype": torch.float32, "use_amp": False, "use_compile": False}

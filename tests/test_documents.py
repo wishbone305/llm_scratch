@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from llmscratch.data import iter_documents, load_split, write_documents
+from llmscratch.data import iter_documents, load_split, write_documents, write_mixed
 from llmscratch.tokenizer import Tokenizer
 
 
@@ -32,3 +32,13 @@ def test_write_documents_appends_eot_per_doc(tmp_path):
     assert int((arr == eot).sum()) == 2   # exactly one EOT per document
     assert arr[-1] == eot
     assert len(arr) == n
+
+
+def test_write_mixed_interleaves_by_weight(tmp_path):
+    srcA = ("A", ("alpha beta gamma delta " for _ in range(5000)), 0.7)
+    srcB = ("B", ("epsilon zeta " for _ in range(5000)), 0.3)
+    counts = write_mixed([srcA, srcB], tmp_path / "data", target_tokens=3000, val_frac=0.0, seed=0)
+    arr = load_split(tmp_path / "data", "train")
+    assert len(arr) >= 2500          # roughly hit the target (per-doc granularity)
+    assert counts["A"] > counts["B"]  # 0.7 weight beats 0.3
+    assert int(arr.max()) < 50257

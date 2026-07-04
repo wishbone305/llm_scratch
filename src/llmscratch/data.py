@@ -195,3 +195,50 @@ def write_documents(documents, out_path: str | Path, tokenizer: Tokenizer | None
             ids.tofile(f)
             count += len(ids)
     return count
+
+
+def write_mixed(sources, out_dir: str | Path, target_tokens: int, val_frac: float = 0.005,
+                seed: int = 1337, tokenizer: Tokenizer | None = None) -> dict[str, int]:
+    """Interleave multiple text sources into train.bin + val.bin, up to ``target_tokens``.
+
+    ``sources``: list of ``(name, texts, weight)`` where ``texts`` is an iterable of strings.
+    Each source is capped at ``weight / sum(weights) * target_tokens`` and drawn by remaining
+    budget, so the blend is interleaved doc-by-doc (not concatenated). A real EOT is appended
+    per document. Returns ``{name: token_count}``. A source that runs dry is simply dropped.
+    """
+    import random
+
+    tok = tokenizer or Tokenizer()
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    names = [n for n, _, _ in sources]
+    total_w = sum(max(w, 0.0) for _, _, w in sources) or 1.0
+    budgets = [max(w, 0.0) / total_w * target_tokens for _, _, w in sources]
+    iters = [iter(t) for _, t, _ in sources]
+    counts = [0] * len(sources)
+    active = {i for i in range(len(sources)) if budgets[i] > 0}
+    rng = random.Random(seed)
+    total = 0
+
+    with open(out_dir / "train.bin", "wb") as tf, open(out_dir / "val.bin", "wb") as vf:
+        while active and total < target_tokens:
+            choices = list(active)
+            weights = [max(budgets[i] - counts[i], 0.0) for i in choices]
+            if sum(weights) <= 0:
+                break
+            i = rng.choices(choices, weights=weights)[0]
+            try:
+                text = next(iters[i])
+            except StopIteration:
+                active.discard(i)
+                continue
+            if not text or not text.strip():
+                continue
+            ids = np.asarray(tok.encode(text.strip(), add_eot=True), dtype=np.uint16)
+            ids.tofile(vf if rng.random() < val_frac else tf)
+            counts[i] += len(ids)
+            total += len(ids)
+            if counts[i] >= budgets[i]:
+                active.discard(i)
+
+    return dict(zip(names, counts))

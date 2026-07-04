@@ -86,6 +86,7 @@ def train(model_cfg, train_cfg, *, data_dir="data", out_dir="out", run_name="mod
         fused=(dev.type == "cuda"),
     )
     ds = BinDataset(data_dir, model_cfg.block_size, seed=train_cfg.seed)
+    scaler = torch.amp.GradScaler(enabled=(dev.type == "cuda" and pol["amp_dtype"] == torch.float16))
 
     def amp_ctx():
         if pol["use_amp"]:
@@ -129,10 +130,13 @@ def train(model_cfg, train_cfg, *, data_dir="data", out_dir="out", run_name="mod
             x, y = as_torch(ds.batch("train", train_cfg.batch_size), device=dev)
             with amp_ctx():
                 loss = model.loss(x, y) / train_cfg.grad_accum
-            loss.backward()
+            scaler.scale(loss).backward()
             step_loss += loss.detach()  # accumulate on-device; single .item() sync after the loop
+        if scaler.is_enabled():
+            scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), train_cfg.grad_clip)
-        optimizer.step()
+        scaler.step(optimizer)
+        scaler.update()
         step_loss = step_loss.item()
         losses.append(step_loss)
 
