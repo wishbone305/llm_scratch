@@ -108,11 +108,19 @@ def train(model_cfg, train_cfg, *, data_dir="data", out_dir="out", run_name="mod
     if resume:
         rp = last if resume == "auto" else Path(resume)
         if rp.exists():
-            st = torch.load(rp, map_location=dev, weights_only=False)
+            # Load on CPU, then move optimizer state to the device incrementally. Loading the
+            # whole checkpoint straight to the GPU spikes VRAM (fresh model + full checkpoint at
+            # once) and OOMs on tight cards; this keeps the peak at steady-state size.
+            st = torch.load(rp, map_location="cpu", weights_only=False)
             raw_model.load_state_dict(st["model"])
             optimizer.load_state_dict(st["optimizer"])
+            for _s in optimizer.state.values():
+                for _k, _v in _s.items():
+                    if isinstance(_v, torch.Tensor):
+                        _s[_k] = _v.to(dev)
             start_step = int(st.get("step", -1)) + 1
             best_val = float(st.get("best_val", float("inf")))
+            del st
             print(f"resumed from {rp} at step {start_step}", flush=True)
     tokens_per_step = train_cfg.batch_size * model_cfg.block_size * train_cfg.grad_accum
     t_last = time.perf_counter()
