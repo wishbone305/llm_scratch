@@ -5,6 +5,7 @@ build_mix.py is a CLI script (not a package module), so it's loaded from its pat
 """
 
 import importlib.util
+import os
 import sys
 import types
 from pathlib import Path
@@ -127,3 +128,17 @@ def test_state_dict_resume_covers_all_docs_in_order(monkeypatch):
     assert calls["n"] == 2                       # exactly one reconnect
     # Resume rewinds to the last checkpoint, so a bounded window may re-yield (<= CHECKPOINT_EVERY).
     assert len(out) - len(set(out)) <= 2
+
+
+def test_force_hf_endpoint_overrides_env_and_patches_module(monkeypatch):
+    mod = _load_build_mix(monkeypatch, lambda *a, **k: None)
+    # Simulate a startup hook having pinned a broken mirror both in env and on an imported module.
+    monkeypatch.setenv("HF_ENDPOINT", "http://117.175.104.83:8081")
+    fake_hub = types.ModuleType("huggingface_hub")
+    fake_hub.ENDPOINT = "http://117.175.104.83:8081"
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
+
+    mod._force_hf_endpoint("https://huggingface.co")
+
+    assert os.environ["HF_ENDPOINT"] == "https://huggingface.co"  # env override wins
+    assert fake_hub.ENDPOINT == "https://huggingface.co"          # already-imported module patched

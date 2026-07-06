@@ -7,10 +7,15 @@ Requires the `datasets` library:  pip install datasets   (or: uv pip install dat
 
 Usage:
     uv run python scripts/build_mix.py --target-tokens 4e9
+
+On a box that forces a broken HF mirror via a startup hook (a shell `export HF_ENDPOINT` gets
+clobbered at interpreter start), override it from inside the process:
+    python scripts/build_mix.py --target-tokens 15e9 --hf-endpoint https://huggingface.co
 """
 
 import argparse
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -22,6 +27,25 @@ from llmscratch.data import write_mixed
 MAX_RETRIES = 6
 BACKOFF_CAP_SECONDS = 60
 CHECKPOINT_EVERY = 1000  # snapshot stream position every N docs for cheap resume after a disconnect
+
+
+def _force_hf_endpoint(endpoint: str) -> None:
+    """Point huggingface_hub/datasets at ``endpoint``, beating any box startup hook that forces a
+    broken mirror. Some rental images inject an ``HF_ENDPOINT`` override via a sitecustomize/.pth
+    that runs at interpreter start — *after* your shell ``export`` — so the only reliable fix is to
+    set it from inside the process before ``datasets`` imports. Sets the env var and also patches
+    the ``ENDPOINT`` constant directly, covering both env-injected and patched-constant mirrors.
+    """
+    os.environ["HF_ENDPOINT"] = endpoint
+    for name in ("huggingface_hub", "huggingface_hub.constants"):
+        mod = sys.modules.get(name)
+        if mod is not None and getattr(mod, "ENDPOINT", None):
+            mod.ENDPOINT = endpoint
+    try:  # force-import + patch for the common case where hf isn't imported yet
+        import huggingface_hub.constants as _c
+        _c.ENDPOINT = endpoint
+    except Exception:  # noqa: BLE001 — best effort; the env var alone still applies at import
+        pass
 
 # (hf_id, subset_or_None, text_field, weight) — edit freely. Verified curated blend for a small model.
 BLEND = [
@@ -92,7 +116,16 @@ def main() -> None:
     ap.add_argument("--out-dir", default="data")
     ap.add_argument("--val-frac", type=float, default=0.005)
     ap.add_argument("--seed", type=int, default=1337)
+    ap.add_argument("--hf-endpoint", default=None,
+                    help="force the HuggingFace endpoint (e.g. https://huggingface.co), overriding a "
+                         "box mirror injected via a sitecustomize/.pth startup hook")
     args = ap.parse_args()
+
+    # Override a forced mirror from *inside* the process (a shell `export HF_ENDPOINT` loses to a
+    # startup hook). Must run before any datasets/huggingface_hub import below.
+    if args.hf_endpoint:
+        _force_hf_endpoint(args.hf_endpoint)
+        print(f"HF endpoint forced to {args.hf_endpoint}", flush=True)
 
     # Faster, more resilient HF downloads. Must be set BEFORE huggingface_hub/datasets import.
     os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")  # default 10s -> fewer spurious timeouts
