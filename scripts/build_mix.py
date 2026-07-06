@@ -21,6 +21,7 @@ from llmscratch.data import write_mixed
 # can survive many disconnects over its lifetime as long as it keeps streaming between them.
 MAX_RETRIES = 6
 BACKOFF_CAP_SECONDS = 60
+CHECKPOINT_EVERY = 1000  # snapshot stream position every N docs for cheap resume after a disconnect
 
 # (hf_id, subset_or_None, text_field, weight) — edit freely. Verified curated blend for a small model.
 BLEND = [
@@ -37,31 +38,42 @@ BLEND = [
 def _texts(hf_id, subset, field):
     """Yield the text field from a streaming HF dataset, resilient to transient network errors.
 
-    A failed initial load or a mid-stream "server disconnected" is retried with exponential
-    backoff: the stream is re-opened and fast-forwarded past what we already yielded (``.skip``),
-    so we resume rather than restart. Any progress between failures resets the retry budget. After
-    ``MAX_RETRIES`` failures *with no progress* the source ends gracefully — the build continues
-    with the other sources instead of crashing. Honours ``HF_TOKEN`` automatically via ``datasets``.
+    On a mid-stream "server disconnected" the stream is re-opened and resumed. Resume prefers
+    ``IterableDataset.state_dict()`` / ``load_state_dict()`` (datasets >= 2.19): a cheap seek back
+    to the saved shard+row that does NOT re-download earlier shards. It falls back to ``.skip(n)``
+    (which re-streams from the start) only when state_dict is unavailable. Progress resets the
+    retry budget, so a source survives many disconnects; after ``MAX_RETRIES`` *stalled* attempts
+    it ends gracefully and the build continues with the other sources. ``HF_TOKEN`` is honoured
+    automatically via ``datasets``.
     """
     from datasets import load_dataset
 
     ds_args = [hf_id] + ([subset] if subset else [])
-    seen = 0        # docs already yielded (the resume point after a reconnect)
-    attempt = 0     # consecutive failures with no progress
+    state = None          # last saved IterableDataset position (cheap-resume checkpoint)
+    checkpoint_seen = 0   # doc count at that saved position
+    seen = 0              # docs consumed so far
+    attempt = 0           # consecutive stalled (no-progress) retries
     while True:
-        progress_before = seen
+        advanced = False
         try:
             ds = load_dataset(*ds_args, split="train", streaming=True)
-            if seen:
-                ds = ds.skip(seen)  # resume past what we already consumed
+            can_checkpoint = hasattr(ds, "state_dict") and hasattr(ds, "load_state_dict")
+            if state is not None and can_checkpoint:
+                ds.load_state_dict(state)   # cheap seek back to where we were (no full re-read)
+                seen = checkpoint_seen
+            elif seen and hasattr(ds, "skip"):
+                ds = ds.skip(seen)          # fallback: re-stream past what we've consumed
             for ex in ds:
+                advanced = True
                 seen += 1
                 t = ex.get(field)
                 if t:
                     yield t
+                if can_checkpoint and seen % CHECKPOINT_EVERY == 0:
+                    state, checkpoint_seen = ds.state_dict(), seen
             return  # stream exhausted cleanly
         except Exception as exc:  # noqa: BLE001 — network resilience: retry, then drop the source
-            if seen > progress_before:
+            if advanced:
                 attempt = 0  # made progress this round; the disconnect was transient
             attempt += 1
             if attempt > MAX_RETRIES:
@@ -70,7 +82,7 @@ def _texts(hf_id, subset, field):
                 return
             wait = min(2 ** attempt, BACKOFF_CAP_SECONDS)
             print(f"! {hf_id}: {type(exc).__name__} at doc {seen} — "
-                  f"retry {attempt}/{MAX_RETRIES} in {wait}s", flush=True)
+                  f"resume retry {attempt}/{MAX_RETRIES} in {wait}s", flush=True)
             time.sleep(wait)
 
 

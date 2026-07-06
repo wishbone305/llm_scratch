@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-data = ["datasets>=2.14", "hf_transfer>=0.1"]  # hf_transfer: Rust-accelerated HF downloads
+data = ["datasets>=2.19", "hf_transfer>=0.1"]  # 2.19+: cheap state_dict resume; hf_transfer: fast downloads
 
 [dependency-groups]
 dev = [

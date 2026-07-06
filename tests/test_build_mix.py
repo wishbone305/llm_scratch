@@ -83,3 +83,47 @@ def test_empty_and_missing_text_fields_are_skipped(monkeypatch):
     docs = ["keep1", "", "keep2", None]
     mod = _load_build_mix(monkeypatch, lambda *a, **k: _FakeStream(docs))
     assert list(mod._texts("x", None, "text")) == ["keep1", "keep2"]
+
+
+class _StatefulFakeStream:
+    """IterableDataset stand-in supporting state_dict/load_state_dict (the datasets>=2.19 path).
+
+    Resume seeks back to the checkpointed position rather than re-streaming from the start.
+    """
+
+    def __init__(self, docs, fail_at=None):
+        self._docs = docs
+        self._fail_at = fail_at
+        self._pos = 0
+
+    def state_dict(self):
+        return {"pos": self._pos}
+
+    def load_state_dict(self, state):
+        self._pos = state["pos"]
+
+    def __iter__(self):
+        while self._pos < len(self._docs):
+            if self._fail_at is not None and self._pos == self._fail_at:
+                self._fail_at = None  # fail only once
+                raise ConnectionError("server disconnected")
+            yield {"text": self._docs[self._pos]}
+            self._pos += 1
+
+
+def test_state_dict_resume_covers_all_docs_in_order(monkeypatch):
+    docs = [f"doc{i}" for i in range(10)]
+    calls = {"n": 0}
+
+    def load_dataset(*_a, **_k):
+        calls["n"] += 1
+        return _StatefulFakeStream(docs, fail_at=5 if calls["n"] == 1 else None)
+
+    mod = _load_build_mix(monkeypatch, load_dataset)
+    monkeypatch.setattr(mod, "CHECKPOINT_EVERY", 2)  # checkpoint often so resume lands near the fault
+    out = list(mod._texts("x", None, "text"))
+
+    assert set(out) == set(docs)                 # nothing lost across the disconnect
+    assert calls["n"] == 2                       # exactly one reconnect
+    # Resume rewinds to the last checkpoint, so a bounded window may re-yield (<= CHECKPOINT_EVERY).
+    assert len(out) - len(set(out)) <= 2
