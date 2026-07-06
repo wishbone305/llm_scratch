@@ -16,11 +16,13 @@ from llmscratch.data import write_mixed
 
 # (hf_id, subset_or_None, text_field, weight) — edit freely. Verified curated blend for a small model.
 BLEND = [
-    ("HuggingFaceTB/smollm-corpus", "fineweb-edu-dedup", "text", 0.45),  # on-distribution bulk
-    ("HuggingFaceTB/smollm-corpus", "cosmopedia-v2",     "text", 0.20),  # synthetic quality lift
+    ("HuggingFaceTB/smollm-corpus", "fineweb-edu-dedup", "text", 0.40),  # on-distribution bulk
+    ("HuggingFaceTB/smollm-corpus", "cosmopedia-v2",     "text", 0.18),  # synthetic quality lift
     ("mlfoundations/dclm-baseline-1.0-parquet", None,    "text", 0.15),  # general-web diversity
     ("wikimedia/wikipedia",         "20231101.en",       "text", 0.10),  # factual grounding
     ("HuggingFaceTB/finemath",      "finemath-4plus",    "text", 0.07),  # reasoning signal
+    ("DKYoon/SlimPajama-6B",        None,                "text", 0.06),  # multi-source diversity
+    ("common-pile/project_gutenberg", None,              "text", 0.04),  # public-domain books (long-form)
 ]
 
 
