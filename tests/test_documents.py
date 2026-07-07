@@ -42,3 +42,18 @@ def test_write_mixed_interleaves_by_weight(tmp_path):
     assert len(arr) >= 2500          # roughly hit the target (per-doc granularity)
     assert counts["A"] > counts["B"]  # 0.7 weight beats 0.3
     assert int(arr.max()) < 50257
+
+
+def test_write_mixed_logs_progress_when_enabled(tmp_path, capsys):
+    srcA = ("A", ("alpha beta gamma delta " for _ in range(5000)), 1.0)
+    write_mixed([srcA], tmp_path / "data", target_tokens=3000, val_frac=0.0, seed=0,
+                log_every_tokens=500)
+    out = capsys.readouterr().out
+    assert "[build]" in out                     # progress lines printed
+    assert "tok/s" in out and "ETA" in out       # include rate + ETA
+
+
+def test_write_mixed_silent_by_default(tmp_path, capsys):
+    srcA = ("A", ("alpha beta gamma delta " for _ in range(5000)), 1.0)
+    write_mixed([srcA], tmp_path / "data", target_tokens=3000, val_frac=0.0, seed=0)
+    assert "[build]" not in capsys.readouterr().out  # silent unless explicitly enabled

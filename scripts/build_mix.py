@@ -155,8 +155,10 @@ def main() -> None:
         print(f"+ {name}  (weight {weight})", flush=True)
 
     print(f"building ~{int(args.target_tokens):,} tokens (interleaved) ...", flush=True)
+    # ~1% cadence so a multi-hour build reports progress without spamming (min 50M tokens).
+    log_every = max(int(args.target_tokens) // 100, 50_000_000)
     counts = write_mixed(sources, args.out_dir, int(args.target_tokens),
-                         val_frac=args.val_frac, seed=args.seed)
+                         val_frac=args.val_frac, seed=args.seed, log_every_tokens=log_every)
     total = sum(counts.values())
     print(f"\nDONE: {total:,} tokens -> {Path(args.out_dir).resolve()}")
     for name, c in counts.items():

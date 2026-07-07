@@ -7,6 +7,7 @@ what lets the same data path feed both training tracks.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import numpy as np
@@ -198,13 +199,17 @@ def write_documents(documents, out_path: str | Path, tokenizer: Tokenizer | None
 
 
 def write_mixed(sources, out_dir: str | Path, target_tokens: int, val_frac: float = 0.005,
-                seed: int = 1337, tokenizer: Tokenizer | None = None) -> dict[str, int]:
+                seed: int = 1337, tokenizer: Tokenizer | None = None,
+                log_every_tokens: int = 0) -> dict[str, int]:
     """Interleave multiple text sources into train.bin + val.bin, up to ``target_tokens``.
 
     ``sources``: list of ``(name, texts, weight)`` where ``texts`` is an iterable of strings.
     Each source is capped at ``weight / sum(weights) * target_tokens`` and drawn by remaining
     budget, so the blend is interleaved doc-by-doc (not concatenated). A real EOT is appended
     per document. Returns ``{name: token_count}``. A source that runs dry is simply dropped.
+
+    ``log_every_tokens``: if > 0, print a progress line (tokens, %, rate, ETA) roughly every that
+    many tokens — so a multi-hour build isn't a silent black box. 0 keeps it silent (the default).
     """
     import random
 
@@ -219,6 +224,8 @@ def write_mixed(sources, out_dir: str | Path, target_tokens: int, val_frac: floa
     active = {i for i in range(len(sources)) if budgets[i] > 0}
     rng = random.Random(seed)
     total = 0
+    start = time.time()
+    next_log = log_every_tokens  # token threshold at which to print the next progress line
 
     with open(out_dir / "train.bin", "wb") as tf, open(out_dir / "val.bin", "wb") as vf:
         while active and total < target_tokens:
@@ -240,5 +247,13 @@ def write_mixed(sources, out_dir: str | Path, target_tokens: int, val_frac: floa
             total += len(ids)
             if counts[i] >= budgets[i]:
                 active.discard(i)
+            if log_every_tokens and total >= next_log:
+                elapsed = max(time.time() - start, 1e-9)
+                rate = total / elapsed
+                eta_min = (target_tokens - total) / rate / 60 if rate else 0.0
+                print(f"[build] {total / 1e9:.2f}B / {target_tokens / 1e9:.1f}B tokens "
+                      f"({100 * total / target_tokens:.1f}%) | {rate / 1e6:.2f}M tok/s | "
+                      f"ETA {eta_min:.0f}m", flush=True)
+                next_log = total + log_every_tokens
 
     return dict(zip(names, counts))
